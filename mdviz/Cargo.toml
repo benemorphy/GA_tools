@@ -1,0 +1,11 @@
+[package]
+name = "mdviz"
+version = "0.3.0"
+edition = "2021"
+
+[dependencies]
+pulldown-cmark = "0.10"
+clap = { version = "4", features = ["derive"] }
+wry = "0.41"
+tao = "0.27"
+carbonpdf = "0.2.0"
