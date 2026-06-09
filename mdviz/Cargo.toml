@@ -3,6 +3,9 @@ name = "mdviz"
 version = "0.3.0"
 edition = "2021"
 
+[build-dependencies]
+embed-resource = "3"
+
 [dependencies]
 pulldown-cmark = "0.10"
 clap = { version = "4", features = ["derive"] }

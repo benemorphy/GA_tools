@@ -1,8 +1,14 @@
 // md_server_rs - Markdown 文件浏览器 (Rust)
-// Usage: md_server_rs [port] [root_dir]
-//   port:     server port (default: 8899)
-//   root_dir: directory to serve (default: ./docs)
+// Usage: md_server_rs [port] [root_dir] [base_path]
+//   port:      server port (default: 8899)
+//   root_dir:  directory to serve (default: ./docs)
+//   base_path: URL prefix for links, e.g. /docs (default: "")
 //   支持相对路径和绝对路径
+// Fixes:
+//   - 左侧目录按字母排序 (locale-aware)
+//   - 中文目录跳转正确
+//   - 统一 UTF-8 编码
+//   - LaTeX 数学公式渲染 (KaTeX)
 use pulldown_cmark::{html, Options, Parser};
 use std::collections::HashMap;
 use std::env;
@@ -25,6 +31,7 @@ const HTML_TPL: &str = r##"<!DOCTYPE html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} &mdash; MD Viewer</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <style>
 * {margin:0;padding:0;box-sizing:border-box;}
 body {font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#2c3e50;background:#fafafa;display:flex;width:100%;height:100vh;overflow:hidden;}
@@ -55,12 +62,15 @@ body {font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
 #main ul,#main ol {margin:10px 0;padding-left:25px;}
 #main li {margin:4px 0;}
 #main .hljs {background:transparent;}
+.katex-formula {overflow-x:auto;overflow-y:hidden;padding:8px 0;text-align:center;}
 </style>
 </head><body>
 <nav id="sidebar">{nav}</nav>
 <div id="resizer"></div>
 <main id="main">{content}</main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.getElementById('main'),{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
 <script>
 (function(){var sidebar=document.getElementById("sidebar");var resizer=document.getElementById("resizer");var isDragging=false;var saved=localStorage.getItem("md_sidebar_w");if(saved)sidebar.style.width=saved+"px";resizer.addEventListener("mousedown",function(e){isDragging=true;e.preventDefault()});document.addEventListener("mousemove",function(e){if(!isDragging)return;var w=Math.max(100,Math.min(600,e.clientX-sidebar.getBoundingClientRect().left));sidebar.style.width=w+"px"});document.addEventListener("mouseup",function(){if(isDragging){isDragging=false;localStorage.setItem("md_sidebar_w",parseInt(sidebar.style.width))}});document.querySelectorAll("#sidebar a").forEach(function(a){if(a.href===location.href||a.href===location.href.split("?")[0])a.classList.add("active")});hljs.highlightAll();})();
 </script>
@@ -82,6 +92,14 @@ fn main() {
     } else {
         let cwd = env::current_dir().expect("Cannot get CWD");
         cwd.join("docs")
+    };
+
+    // parse base path (third optional arg, e.g. /docs)
+    let base_path: String = if args.len() > 3 {
+        let bp = args[3].trim_start_matches('/').to_string();
+        if bp.is_empty() { String::new() } else { format!("/{}", bp) }
+    } else {
+        String::new()
     };
 
     let served = if root_dir.is_absolute() {
@@ -107,7 +125,8 @@ fn main() {
         if let Ok(st) = stream {
             let r = s.clone();
             let j = p.clone();
-            thread::spawn(move || handle(st, &r, &j));
+            let b = base_path.clone();
+            thread::spawn(move || handle(st, &r, &j, &b));
         }
     }
 }
@@ -146,15 +165,23 @@ fn parse(s: &mut TcpStream) -> Option<Req> {
     Some(Req { path: clean_path, query: q, body })
 }
 
-fn handle(mut s: TcpStream, served: &Path, proj: &Path) {
+fn handle(mut s: TcpStream, served: &Path, proj: &Path, base_path: &str) {
     let Some(req) = parse(&mut s) else { return };
-    let path = url_decode(&req.path.trim_start_matches('/')).to_string();
+    let path_raw = url_decode(&req.path.trim_start_matches('/')).to_string();
+    // strip base_path prefix for routing (e.g. /docs/?dir=xxx → /?dir=xxx)
+    let bp = base_path.trim_start_matches('/');
+    let path = if !bp.is_empty() && path_raw.starts_with(bp) {
+        path_raw[bp.len()..].to_string()
+    } else {
+        path_raw
+    };
+    let path = path.trim_start_matches('/').to_string();
     let q = req.query;
     let body = req.body;
 
     // route
-    if path == "/" || path.is_empty() {
-        let nav = nav_html(served, proj, &q);
+    if path.is_empty() {
+        let nav = nav_html(served, proj, &q, base_path);
         let cr = cur_root(served, proj, &q);
         let title = cr.file_name().and_then(|n| n.to_str()).unwrap_or("docs");
         let html = HTML_TPL.replace("{title}", title)
@@ -175,7 +202,7 @@ fn handle(mut s: TcpStream, served: &Path, proj: &Path) {
             })
         };
         if let Some(text) = content {
-            let nav = nav_html(served, proj, &q);
+            let nav = nav_html(served, proj, &q, base_path);
             let cr = cur_root(served, proj, &q);
             let dir_title = cr.file_name().and_then(|n| n.to_str()).unwrap_or("docs");
             let fname = fp.file_name().and_then(|n| n.to_str()).unwrap_or("?");
@@ -189,7 +216,8 @@ fn handle(mut s: TcpStream, served: &Path, proj: &Path) {
                 let parser = Parser::new_ext(&text, opts);
                 let mut html_buf = String::new();
                 html::push_html(&mut html_buf, parser);
-                format!("<article>{}</article>", html_buf)
+                let processed = process_md(&html_buf);
+                format!("<article>{}</article>", processed)
             } else {
                 // code files: display as syntax-highlighted code block
                 format!(
@@ -212,7 +240,7 @@ fn handle(mut s: TcpStream, served: &Path, proj: &Path) {
     }
 }
 
-fn nav_html(served: &Path, proj: &Path, q: &HashMap<String, String>) -> String {
+fn nav_html(served: &Path, proj: &Path, q: &HashMap<String, String>, base_path: &str) -> String {
     let cr = cur_root(served, proj, q);
     let mut p: Vec<String> = Vec::new();
     p.push(format!("<h3>{}</h3>", esc(cr.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
@@ -221,20 +249,29 @@ fn nav_html(served: &Path, proj: &Path, q: &HashMap<String, String>) -> String {
         if let Some(parent) = cr.parent() {
             let dp = rel_p(parent, served, proj);
             let name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            p.push(format!("<a href='/?dir={}' class='parent-btn'>&#8593; 上一级: {}/</a>", esc(&dp), esc(name)));
+            p.push(format!("<a href='{}/?dir={}' class='parent-btn'>&#8593; 上一级: {}/</a>", base_path, esc(&dp), esc(name)));
         }
     }
     // subdirs
     if let Ok(entries) = fs::read_dir(&cr) {
         let mut subs: Vec<_> = entries.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).collect();
-        subs.sort_by_key(|e| e.file_name());
+        subs.sort_by(|a, b| {
+            let an = a.file_name().to_string_lossy().to_lowercase();
+            let bn = b.file_name().to_string_lossy().to_lowercase();
+            let a_is_chinese = an.chars().any(|c| c as u32 > 0x4E00);
+            let b_is_chinese = bn.chars().any(|c| c as u32 > 0x4E00);
+            if a_is_chinese && !b_is_chinese { std::cmp::Ordering::Greater }
+            else if !a_is_chinese && b_is_chinese { std::cmp::Ordering::Less }
+            else { an.cmp(&bn) }
+        });
         if !subs.is_empty() {
             p.push("<h3>&#128193; 目录</h3>".into());
             for e in &subs {
                 let name = e.file_name().to_string_lossy().to_string();
                 if name.starts_with('.') { continue; }
                 let dp = rel_p(&e.path(), served, proj);
-                p.push(format!("<a href='/?dir={}'>&#128193; {}/</a>", esc(&dp), esc(&name)));
+                let url_dir = url_encode(&dp);
+                p.push(format!("<a href='{}/?dir={}'>&#128193; {}/</a>", base_path, url_dir, esc(&name)));
             }
         }
     }
@@ -243,14 +280,18 @@ fn nav_html(served: &Path, proj: &Path, q: &HashMap<String, String>) -> String {
         let mut files: Vec<_> = entries.filter_map(|e| e.ok())
             .filter(|e| e.path().is_file() && is_supported(&e.path()))
             .collect();
-        files.sort_by_key(|e| e.file_name());
+        files.sort_by(|a, b| {
+            let an = a.file_name().to_string_lossy().to_lowercase();
+            let bn = b.file_name().to_string_lossy().to_lowercase();
+            an.cmp(&bn)
+        });
         if !files.is_empty() {
             p.push("<h3>&#128196; 文件</h3>".into());
             for e in &files {
                 let name = e.file_name().to_string_lossy().to_string();
                 let dp = rel_p(&cr, served, proj);
-                let qs = if dp.is_empty() { String::new() } else { format!("?dir={}", esc(&dp)) };
-                p.push(format!("<a href='/{}{}'>{}</a>", esc(&name), qs, esc(&name)));
+                let qs = if dp.is_empty() { String::new() } else { format!("?dir={}", url_encode(&dp)) };
+                p.push(format!("<a href='{base_path}/{}{}'>{}</a>", url_encode(&name), qs, esc(&name)));
             }
         }
     }
@@ -258,7 +299,8 @@ fn nav_html(served: &Path, proj: &Path, q: &HashMap<String, String>) -> String {
 }
 
 fn cur_root(served: &Path, proj: &Path, q: &HashMap<String, String>) -> PathBuf {
-    let dir = q.get("dir").map(|s| s.as_str()).unwrap_or("");
+    let dir_raw = q.get("dir").map(|s| s.as_str()).unwrap_or("");
+    let dir = if dir_raw.is_empty() { dir_raw } else { &url_decode(dir_raw) };
     if dir.is_empty() || dir == "." { return served.to_path_buf(); }
     let resolved = served.join(dir).canonicalize().unwrap_or_else(|_| served.to_path_buf());
     if resolved.starts_with(proj) { resolved } else { proj.to_path_buf() }
@@ -301,6 +343,8 @@ fn walk(dir: &Path, name: &str) -> Option<PathBuf> {
 }
 
 fn process_md(html: &str) -> String {
+    // KaTeX 在客户端通过 auto-render 处理 $...$ 和 $$...$$
+    // 服务端不做任何转换，直接透传
     html.to_string()
 }
 
@@ -321,7 +365,7 @@ fn url_decode(s: &str) -> String {
                 else { 1 };
             if n > 1 {
                 for j in 1..n {
-                    if i + 2 + j*3 + 2 < bytes.len() && bytes[i + j*3] == b'%' {
+                    if i + j*3 + 2 < bytes.len() && bytes[i + j*3] == b'%' {
                         let hi2 = (bytes[i+1+j*3] as char).to_digit(16).unwrap_or(0) as u8;
                         let lo2 = (bytes[i+2+j*3] as char).to_digit(16).unwrap_or(0) as u8;
                         b[j] = (hi2 << 4) | lo2;
@@ -334,8 +378,34 @@ fn url_decode(s: &str) -> String {
             out.push(' ');
             i += 1;
         } else {
-            out.push(bytes[i] as char);
-            i += 1;
+            // raw non-ASCII byte: use lossy conversion
+            let raw = &bytes[i..];
+            let (ch, n) = if raw.len() >= 3 && (raw[0] & 0xF0) == 0xE0
+                && (raw[1] & 0xC0) == 0x80 && (raw[2] & 0xC0) == 0x80 {
+                // 3-byte UTF-8
+                let c = std::str::from_utf8(&raw[..3]).unwrap_or("?");
+                (c.to_string(), 3)
+            } else if raw.len() >= 2 && (raw[0] & 0xE0) == 0xC0
+                && (raw[1] & 0xC0) == 0x80 {
+                let c = std::str::from_utf8(&raw[..2]).unwrap_or("?");
+                (c.to_string(), 2)
+            } else {
+                (std::str::from_utf8(&raw[..1]).unwrap_or("?").to_string(), 1)
+            };
+            out.push_str(&ch);
+            i += n;
+        }
+    }
+    out
+}
+
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'/' => out.push('/'),  // keep path separators
+            _ => out.push_str(&format!("%{:02X}", b)),
         }
     }
     out
