@@ -18,6 +18,7 @@ struct Args {
     dir: String,
 }
 
+
 fn find_free_port(start: u16, end: u16) -> u16 {
     for port in start..=end {
         if TcpListener::bind(("127.0.0.1", port)).is_ok() { return port; }
@@ -417,10 +418,11 @@ fn handle_file(stream: &mut TcpStream, raw_path: &str) {
         let escaped = html_escape(&content);
         let list_link = file.parent().and_then(|p| p.to_str()).unwrap_or("").replace('\\', "/");
         let enc_link = url_encode_path(&list_link);
+        let hljs_lang = if ext == "log" { "plaintext" } else { &ext };
         format!(
             "<div class='nav'><a href='/list/{0}/'>↩ 返回目录</a></div>
             <pre><code class='language-{1}'>{2}</code></pre>",
-            enc_link, ext, escaped
+            enc_link, hljs_lang, escaped
         )
     } else {
         respond(stream, 403, "Forbidden", "<h1>403</h1><p>不支持的文件类型</p>");
@@ -470,6 +472,17 @@ fn handle_file(stream: &mut TcpStream, raw_path: &str) {
         .nav a {{color:var(--accent);text-decoration:none;}}
         .footer {{padding:8px 30px;font-size:12px;color:var(--muted);border-top:1px solid var(--sidebar-bg);}}
         @media print {{.sidebar,.toolbar,.footer {{display:none!important;}}}}
+        .content .hljs {{background:transparent;color:var(--fg);}}
+        .content .hljs-comment,.content .hljs-quote {{color:var(--muted);font-style:italic;}}
+        .content .hljs-keyword,.content .hljs-selector-tag,.content .hljs-type,.content .hljs-literal {{color:var(--accent);}}
+        .content .hljs-string,.content .hljs-regexp,.content .hljs-addition {{color:var(--accent);opacity:0.75;}}
+        .content .hljs-number,.content .hljs-boolean {{color:var(--accent);opacity:0.85;}}
+        .content .hljs-built_in,.content .hljs-title,.content .hljs-section {{color:var(--accent);font-weight:600;}}
+        .content .hljs-attr {{color:var(--fg);opacity:0.85;}}
+        .content .hljs-params {{color:var(--fg);}}
+        .content .hljs-meta {{color:var(--muted);font-weight:600;}}
+        .content .hljs-deletion {{color:var(--accent);opacity:0.5;}}
+        .content .hljs-doctag {{color:var(--muted);font-weight:600;}}
         </style>
         <script>
         var themes={{light:{{bg:'#fafafa',fg:'#2c3e50',side:'#eef0f4',accent:'#e94560',muted:'#999',code:'#f5f5f5',tbl:'#ddd',thdr:'#eee'}},
@@ -554,6 +567,8 @@ fn handle_file(stream: &mut TcpStream, raw_path: &str) {
             </div>
         </div>
         <div class='content'>{body_html}</div>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script>hljs.highlightAll();</script>
         {footer}
         </div></body></html>"#,
         title = html_escape(file_name),

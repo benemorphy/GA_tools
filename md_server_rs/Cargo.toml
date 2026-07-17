@@ -1,7 +1,0 @@
-[package]
-name = "md_server_rs"
-version = "0.2.0"
-edition = "2021"
-
-[dependencies]
-pulldown-cmark = "0.10"

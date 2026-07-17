@@ -1,16 +1,12 @@
-# Rust build artifacts
+# 仅同步 md_server_rs/ 和 mdviz/，其他全部忽略
+/*
+
+# 允许这两个目录及其内容
+!/md_server_rs/
+!/mdviz/
+
+# 允许 .gitignore 本身
+!/.gitignore
+
+# Rust 构建产物（两个目录内也适用）
 **/target/
-
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-Thumbs.db
-.DS_Store

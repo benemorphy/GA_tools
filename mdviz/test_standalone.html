@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>highlight.js test</title>
+<style>
+:root { --accent: #e94560; --fg: #2c3e50; --muted: #999; --code-bg: #f5f5f5; }
+body { font-family: sans-serif; padding: 20px; background: #fafafa; color: var(--fg); }
+pre { background: var(--code-bg); padding: 12px; border-radius: 6px; overflow-x: auto; }
+code { font-family: monospace; font-size: 13px; }
+.content .hljs {background:transparent;color:var(--fg);}
+.content .hljs-keyword,.content .hljs-selector-tag,.content .hljs-type,.content .hljs-literal {color:var(--accent);}
+.content .hljs-string,.content .hljs-regexp,.content .hljs-addition {color:var(--accent);opacity:0.75;}
+.content .hljs-number,.content .hljs-boolean {color:var(--accent);opacity:0.85;}
+.content .hljs-comment,.content .hljs-quote {color:var(--muted);font-style:italic;}
+.content .hljs-built_in,.content .hljs-title {color:var(--accent);font-weight:600;}
+.content .hljs-attr {color:var(--fg);opacity:0.85;}
+.content .hljs-meta {color:var(--muted);font-weight:600;}
+.content .hljs-deletion {color:var(--accent);opacity:0.5;}
+.content .hljs-doctag {color:var(--muted);font-weight:600;}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('hljs running, found', document.querySelectorAll('pre code').length, 'code blocks');
+  hljs.highlightAll();
+});
+</script>
+</head>
+<body>
+<h2>Python Test</h2>
+<div class="content">
+<pre><code class="language-py">def hello(name: str) -> str:
+    """Say hello to someone."""
+    return f"Hello, {name}!"
+
+if __name__ == "__main__":
+    print(hello("World"))
+</code></pre>
+</div>
+<h2>JSON Test</h2>
+<div class="content">
+<pre><code class="language-json">{"name": "test","version": "2.0","enabled": true,"count": 42}</code></pre>
+</div>
+<h2>Log Test</h2>
+<div class="content">
+<pre><code class="language-plaintext">[2026-06-10 10:00:00] INFO: Server started
+[2026-06-10 10:00:01] ERROR: Failed to read config</code></pre>
+</div>
+</body>
+</html>
